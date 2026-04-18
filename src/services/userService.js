@@ -1,15 +1,4 @@
-const prisma = require("../config/db");
-const { validateStatus } = require("../utils/validators");
-
-// ─── Fields to return
-const USER_SELECT = {
-    id: true,
-    name: true,
-    email: true,
-    role: true,
-    status: true,
-    createdAt: true,
-};
+const User = require("../models/User");
 
 // ─── Get All Users 
 
@@ -46,14 +35,12 @@ const getAllUsers = async ({ role, status, page = 1, limit = 20 } = {}) => {
     const skip = (pageNum - 1) * limitNum;
 
     const [users, totalCount] = await Promise.all([
-        prisma.user.findMany({
-            where,
-            select: USER_SELECT,
-            orderBy: { createdAt: "desc" },
-            skip,
-            take: limitNum,
-        }),
-        prisma.user.count({ where }),
+        User.find(where)
+            .select("-password -__v")
+            .sort({ createdAt: -1 })
+            .skip(skip)
+            .limit(limitNum),
+        User.countDocuments(where),
     ]);
 
     return {
@@ -80,10 +67,7 @@ const getUserById = async (userId) => {
         throw err;
     }
 
-    const user = await prisma.user.findUnique({
-        where: { id: userId },
-        select: USER_SELECT,
-    });
+    const user = await User.findById(userId).select("-password -__v");
 
     if (!user) {
         const err = new Error("User not found.");
@@ -126,10 +110,7 @@ const updateUserStatus = async (targetUserId, newStatus, requestingUserId) => {
     }
 
     // Ensure target user exists
-    const existing = await prisma.user.findUnique({
-        where: { id: targetUserId },
-        select: { id: true, status: true },
-    });
+    const existing = await User.findById(targetUserId).select("status");
 
     if (!existing) {
         const err = new Error("User not found.");
@@ -143,11 +124,11 @@ const updateUserStatus = async (targetUserId, newStatus, requestingUserId) => {
         throw err;
     }
 
-    const updated = await prisma.user.update({
-        where: { id: targetUserId },
-        data: { status: newStatus },
-        select: USER_SELECT,
-    });
+    const updated = await User.findByIdAndUpdate(
+        targetUserId,
+        { status: newStatus },
+        { new: true }
+    ).select("-password -__v");
 
     return updated;
 };

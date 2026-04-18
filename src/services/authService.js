@@ -1,6 +1,6 @@
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
-const prisma = require("../config/db");
+const User = require("../models/User");
 const {
     validateEmail,
     validatePassword,
@@ -78,9 +78,7 @@ const signup = async ({ name, email, password, role }) => {
     }
 
     // ── Check if email already taken 
-    const existing = await prisma.user.findUnique({
-        where: { email: email.trim().toLowerCase() },
-    });
+    const existing = await User.findOne({ email: email.trim().toLowerCase() });
     if (existing) {
         const err = new Error("An account with this email address already exists.");
         err.statusCode = 409;
@@ -92,14 +90,12 @@ const signup = async ({ name, email, password, role }) => {
     const hashedPassword = await bcrypt.hash(password, SALT_ROUNDS);
 
     // ── Create user 
-    const user = await prisma.user.create({
-        data: {
-            name: name.trim(),
-            email: email.trim().toLowerCase(),
-            password: hashedPassword,
-            role: assignedRole,
-            status: "active",
-        },
+    const user = await User.create({
+        name: name.trim(),
+        email: email.trim().toLowerCase(),
+        password: hashedPassword,
+        role: assignedRole,
+        status: "active",
     });
 
     // ── Generate token 
@@ -139,9 +135,7 @@ const login = async ({ email, password }) => {
     }
 
     // ── Fetch user 
-    const user = await prisma.user.findUnique({
-        where: { email: email.trim().toLowerCase() },
-    });
+    const user = await User.findOne({ email: email.trim().toLowerCase() });
 
     // Deliberately use the same error for "not found" and "wrong password"
     // to prevent user enumeration attacks

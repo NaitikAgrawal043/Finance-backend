@@ -1,15 +1,14 @@
 
 require("dotenv").config();
 const app = require("./app");
-const prisma = require("./config/db");
+const connectDB = require("./config/db");
 
 const PORT = parseInt(process.env.PORT, 10) || 5000;
 
 const start = async () => {
     try {
-        // Verify database connection before accepting traffic
-        await prisma.$connect();
-        console.log("Database connected successfully.");
+        // Connect to MongoDB
+        await connectDB();
 
         const server = app.listen(PORT, () => {
             console.log(`Finance API running on http://localhost:${PORT}`);
@@ -21,7 +20,10 @@ const start = async () => {
         const gracefulShutdown = async (signal) => {
             console.log(`\n  ${signal} received. Shutting down gracefully...`);
             server.close(async () => {
-                await prisma.$disconnect();
+                const mongoose = require("mongoose");
+                if (mongoose.connection.readyState === 1) {
+                    await mongoose.connection.close();
+                }
                 console.log("Database disconnected. Process terminated.");
                 process.exit(0);
             });
@@ -47,7 +49,10 @@ const start = async () => {
         });
     } catch (error) {
         console.error("Failed to start server:", error.message);
-        await prisma.$disconnect();
+        const mongoose = require("mongoose");
+        if (mongoose.connection.readyState === 1) {
+            await mongoose.connection.close();
+        }
         process.exit(1);
     }
 };

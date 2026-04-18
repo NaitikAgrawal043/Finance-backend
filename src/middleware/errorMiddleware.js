@@ -25,34 +25,18 @@ const errorHandler = (err, req, res, next) => {
     // ── Determine status code ─────────────────────────────────────────────────
     let statusCode = err.statusCode || err.status || 500;
 
-    // ── Prisma-specific error codes ───────────────────────────────────────────
-    if (err.code) {
-        switch (err.code) {
-            // Unique constraint violation (e.g. duplicate email)
-            case "P2002": {
-                statusCode = 409;
-                const field = err.meta?.target?.join(", ") || "field";
-                err.message = `A record with this ${field} already exists.`;
-                break;
-            }
-            // Record not found
-            case "P2025":
-                statusCode = 404;
-                err.message = err.meta?.cause || "The requested resource was not found.";
-                break;
-            // Foreign key constraint failed
-            case "P2003":
-                statusCode = 400;
-                err.message = "Referenced resource does not exist.";
-                break;
-            // Value out of range for type
-            case "P2006":
-                statusCode = 400;
-                err.message = "Provided value is invalid for the field type.";
-                break;
-            default:
-                break;
-        }
+    // ── Mongoose-specific error codes ─────────────────────────────────────────
+    if (err.code === 11000) {
+        // Unique constraint violation (e.g. duplicate email)
+        statusCode = 409;
+        const field = err.keyValue ? Object.keys(err.keyValue).join(", ") : "field";
+        err.message = `A record with this ${field} already exists.`;
+    }
+
+    if (err.name === "CastError") {
+        // Invalid ObjectId
+        statusCode = 400;
+        err.message = "Provided ID format is invalid.";
     }
 
     // ── JWT errors (shouldn't reach here normally, handled in auth middleware) ──

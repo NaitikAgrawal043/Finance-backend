@@ -1,21 +1,17 @@
-const { PrismaClient } = require("@prisma/client");
+const mongoose = require("mongoose");
 
-// ─── Singleton Prisma Client
-// Prevent multiple instances during hot-reload in development
+const connectDB = async () => {
+    try {
+        const uri = process.env.MONGO_URI || process.env.DATABASE_URL;
+        if (!uri) {
+            throw new Error("MONGO_URI is not defined in environment variables.");
+        }
+        await mongoose.connect(uri);
+        console.log("Database connected successfully.");
+    } catch (error) {
+        console.error("Database connection failed:", error.message);
+        process.exit(1);
+    }
+};
 
-const globalForPrisma = globalThis;
-
-const prisma =
-  globalForPrisma.prisma ??
-  new PrismaClient({
-    log:
-      process.env.NODE_ENV === "development"
-        ? ["query", "info", "warn", "error"]
-        : ["error"],
-  });
-
-if (process.env.NODE_ENV !== "production") {
-  globalForPrisma.prisma = prisma;
-}
-
-module.exports = prisma;
+module.exports = connectDB;

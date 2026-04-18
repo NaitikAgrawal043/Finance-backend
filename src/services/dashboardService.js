@@ -1,4 +1,5 @@
-const prisma = require("../config/db");
+const mongoose = require("mongoose");
+const Record = require("../models/Record");
 const {
     computeNetBalance,
     toFloat,
@@ -12,35 +13,50 @@ const {
  * Excludes soft-deleted records.
  * @param {{ userId, role }} requester
  */
-const buildScope = (requester) => ({
-    deletedAt: null,
-    ...(requester.role !== "admin" ? { userId: requester.userId } : {}),
-});
+const buildScope = (requester) => {
+    const scope = { deletedAt: null };
+    if (requester.role !== "admin") {
+        scope.userId = new mongoose.Types.ObjectId(String(requester.userId));
+    }
+    return scope;
+};
 
 // ─── Summary 
 
 /**
  * Returns total income, total expense, net balance, and savings rate.
- * @param {{ userId, role }} requester
  */
 const getSummary = async (requester) => {
-    const where = buildScope(requester);
+    const match = buildScope(requester);
 
-    const [incomeAgg, expenseAgg] = await Promise.all([
-        prisma.record.aggregate({
-            where: { ...where, type: "income" },
-            _sum: { amount: true },
-            _count: { id: true },
-        }),
-        prisma.record.aggregate({
-            where: { ...where, type: "expense" },
-            _sum: { amount: true },
-            _count: { id: true },
-        }),
+    const agg = await Record.aggregate([
+        { $match: match },
+        {
+            $group: {
+                _id: "$type",
+                amount: { $sum: "$amount" },
+                count: { $sum: 1 },
+            },
+        },
     ]);
 
-    const totalIncome = toFloat(incomeAgg._sum.amount);
-    const totalExpense = toFloat(expenseAgg._sum.amount);
+    let rawIncome = 0;
+    let rawExpense = 0;
+    let incomeTransactionCount = 0;
+    let expenseTransactionCount = 0;
+
+    agg.forEach((row) => {
+        if (row._id === "income") {
+            rawIncome = row.amount;
+            incomeTransactionCount = row.count;
+        } else if (row._id === "expense") {
+            rawExpense = row.amount;
+            expenseTransactionCount = row.count;
+        }
+    });
+
+    const totalIncome = toFloat(rawIncome);
+    const totalExpense = toFloat(rawExpense);
     const netBalance = computeNetBalance(totalIncome, totalExpense);
     const savingsRate = computeSavingsRate(totalIncome, totalExpense);
 
@@ -49,8 +65,8 @@ const getSummary = async (requester) => {
         totalExpense,
         netBalance,
         savingsRate,
-        incomeTransactionCount: incomeAgg._count.id,
-        expenseTransactionCount: expenseAgg._count.id,
+        incomeTransactionCount,
+        expenseTransactionCount,
     };
 };
 
@@ -58,42 +74,45 @@ const getSummary = async (requester) => {
 
 /**
  * Returns per-category totals grouped by income/expense type.
- * @param {{ userId, role }} requester
  */
 const getCategoryTotals = async (requester) => {
-    const where = buildScope(requester);
+    const match = buildScope(requester);
 
-    const grouped = await prisma.record.groupBy({
-        by: ["category", "type"],
-        where,
-        _sum: { amount: true },
-        _count: { id: true },
-        orderBy: { _sum: { amount: "desc" } },
-    });
+    const grouped = await Record.aggregate([
+        { $match: match },
+        {
+            $group: {
+                _id: { category: "$category", type: "$type" },
+                amount: { $sum: "$amount" },
+                count: { $sum: 1 },
+            },
+        },
+        { $sort: { amount: -1 } },
+    ]);
 
-    // Reshape into a more readable format
     const categories = {};
     for (const row of grouped) {
-        if (!categories[row.category]) {
-            categories[row.category] = {
-                category: row.category,
+        const category = row._id.category;
+        const type = row._id.type;
+
+        if (!categories[category]) {
+            categories[category] = {
+                category: category,
                 income: 0,
                 expense: 0,
                 transactionCount: 0,
             };
         }
-        const amount = toFloat(row._sum.amount);
-        categories[row.category][row.type] = amount;
-        categories[row.category].transactionCount += row._count.id;
+        const amount = toFloat(row.amount);
+        categories[category][type] = amount;
+        categories[category].transactionCount += row.count;
     }
 
-    // Add net for each category
     const result = Object.values(categories).map((c) => ({
         ...c,
         net: parseFloat((c.income - c.expense).toFixed(2)),
     }));
 
-    // Sort by total activity (income + expense desc)
     result.sort((a, b) => b.income + b.expense - (a.income + a.expense));
 
     return result;
@@ -101,97 +120,71 @@ const getCategoryTotals = async (requester) => {
 
 // ─── Recent Transactions 
 
-/**
- * Returns the N most recent transactions.
- * @param {{ userId, role }} requester
- * @param {number} limit - default 10, max 50
- */
 const getRecentTransactions = async (requester, limit = 10) => {
     const limitNum = Math.min(50, Math.max(1, parseInt(limit) || 10));
-    const where = buildScope(requester);
+    const match = buildScope(requester);
 
-    const records = await prisma.record.findMany({
-        where,
-        orderBy: { date: "desc" },
-        take: limitNum,
-        include: {
-            user: { select: { id: true, name: true } },
-        },
+    const records = await Record.find(match)
+        .sort({ date: -1 })
+        .limit(limitNum)
+        .populate("userId", "name email");
+
+    // Format to match old prisma shape
+    return records.map(r => {
+        const obj = r.toJSON();
+        if (obj.userId && typeof obj.userId === 'object') {
+            obj.user = obj.userId;
+            obj.userId = obj.user.id || obj.user._id;
+        }
+        return obj;
     });
-
-    return records;
 };
 
 // ─── Monthly Trends 
 
 /**
  * Returns monthly income and expense totals for the last N months.
- * Uses Prisma raw query for grouping by month and year.
- *
- * @param {{ userId, role }} requester
- * @param {number} months - how many past months to include (default 12)
  */
 const getMonthlyTrends = async (requester, months = 12) => {
     const monthsNum = Math.min(36, Math.max(1, parseInt(months) || 12));
 
-    // Calculate cutoff date
     const cutoff = new Date();
     cutoff.setMonth(cutoff.getMonth() - monthsNum + 1);
     cutoff.setDate(1);
     cutoff.setHours(0, 0, 0, 0);
 
-    const userFilter = requester.role !== "admin" ? requester.userId : null;
+    const match = { ...buildScope(requester), date: { $gte: cutoff } };
 
-    // Raw query for month-year grouping (Prisma groupBy doesn't support date_trunc)
-    // Two separate queries to safely avoid SQL injection from dynamic userId
-    let results;
+    const results = await Record.aggregate([
+        { $match: match },
+        {
+            $group: {
+                _id: {
+                    month: { $dateToString: { format: "%Y-%m", date: "$date" } },
+                    type: "$type",
+                },
+                total: { $sum: "$amount" },
+                count: { $sum: 1 },
+            },
+        },
+        { $sort: { "_id.month": 1, "_id.type": 1 } },
+    ]);
 
-    if (userFilter) {
-        // Scoped to specific user — userId is parameterized safely
-        results = await prisma.$queryRaw`
-        SELECT
-          TO_CHAR(date, 'YYYY-MM') AS month,
-          type,
-          SUM(amount)::float       AS total,
-          COUNT(id)::int           AS count
-        FROM records
-        WHERE
-          "deletedAt" IS NULL
-          AND date >= ${cutoff}
-          AND "userId" = ${userFilter}
-        GROUP BY month, type
-        ORDER BY month ASC, type ASC
-      `;
-    } else {
-        // Admin — no userId restriction
-        results = await prisma.$queryRaw`
-        SELECT
-          TO_CHAR(date, 'YYYY-MM') AS month,
-          type,
-          SUM(amount)::float       AS total,
-          COUNT(id)::int           AS count
-        FROM records
-        WHERE
-          "deletedAt" IS NULL
-          AND date >= ${cutoff}
-        GROUP BY month, type
-        ORDER BY month ASC, type ASC
-      `;
-    }
-
-    // Reshape into { month, income, expense, net, transactionCount }
     const monthMap = {};
     for (const row of results) {
-        if (!monthMap[row.month]) {
-            monthMap[row.month] = {
-                month: row.month,
+        const month = row._id.month;
+        const type = row._id.type;
+
+        if (!monthMap[month]) {
+            monthMap[month] = {
+                month: month,
                 income: 0,
                 expense: 0,
                 transactionCount: 0,
             };
         }
-        monthMap[row.month][row.type] = toFloat(row.total);
-        monthMap[row.month].transactionCount += row.count;
+        monthMap[month][type] = toFloat(row.total);
+        monthMap[month].transactionCount += row.count;
     }
 
     return Object.values(monthMap).map((m) => ({

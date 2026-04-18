@@ -4,7 +4,7 @@
  */
 
 const jwt = require("jsonwebtoken");
-const prisma = require("../config/db");
+const User = require("../models/User");
 
 /**
  * Middleware: Authenticate User
@@ -60,17 +60,9 @@ const authenticateUser = async (req, res, next) => {
         }
 
         // ── 3. Fetch user from DB (ensure user still exists) ─────────────────
-        const user = await prisma.user.findUnique({
-            where: { id: decoded.id },
-            select: {
-                id: true,
-                name: true,
-                email: true,
-                role: true,
-                status: true,
-                createdAt: true,
-            },
-        });
+        const user = await User.findById(decoded.id).select(
+            "name email role status createdAt"
+        );
 
         if (!user) {
             return res.status(401).json({

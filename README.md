@@ -1,6 +1,6 @@
 # Finance Data Processing & Access Control Dashboard — Backend
 
-A production-ready REST API built with **Node.js**, **Express**, **PostgreSQL**, and **Prisma ORM**. This system serves as the backend engine for a finance dashboard, managing users, roles, and financial transactions.
+A production-ready REST API built with **Node.js**, **Express**, **MongoDB**, and **Mongoose ODM**. This system serves as the backend engine for a finance dashboard, managing users, roles, and financial transactions.
 
 ### Key Features
 - **Authentication & RBAC:** Secure JWT-based login with distinct role-based permissions (`viewer`, `analyst`, `admin`).
@@ -14,8 +14,8 @@ A production-ready REST API built with **Node.js**, **Express**, **PostgreSQL**,
 
 - **Runtime:** Node.js ≥ 18
 - **Framework:** Express 4
-- **Database:** PostgreSQL
-- **ORM:** Prisma
+- **Database:** MongoDB
+- **ODM:** Mongoose
 - **Auth:** JWT + bcrypt
 
 ---
@@ -24,7 +24,7 @@ A production-ready REST API built with **Node.js**, **Express**, **PostgreSQL**,
 
 ### Prerequisites
 - Node.js ≥ 18
-- PostgreSQL server running locally (or a cloud PostgreSQL URL)
+- MongoDB server running locally or a MongoDB Atlas URI
 
 ### 1. Clone & Navigate
 ```bash
@@ -40,31 +40,14 @@ npm install
 Create a `.env` file in the root directory:
 ```bash
 # .env
-DATABASE_URL="postgresql://postgres:yourpassword@localhost:5432/finance_db?schema=public"
+MONGO_URI="mongodb://127.0.0.1:27017/finance_db"
 JWT_SECRET="a_very_long_random_secret_at_least_32_characters"
 JWT_EXPIRES_IN="7d"
 PORT=5000
 NODE_ENV=development
 ```
 
-### 4. Create the Database
-*(Using psql, pgAdmin, or your preferred SQL client)*
-```sql
-CREATE DATABASE finance_db;
-```
-
-### 5. Run Prisma Migrations
-Syncs the database schema and creates necessary models:
-```bash
-npx prisma migrate dev --name init
-```
-
-### 6. Generate Prisma Client
-```bash
-npx prisma generate
-```
-
-### 7. Start the Server
+### 4. Start the Server
 ```bash
 # Development
 npm run dev
